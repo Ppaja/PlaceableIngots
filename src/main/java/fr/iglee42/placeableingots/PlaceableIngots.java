@@ -81,7 +81,30 @@ public class PlaceableIngots {
             BlockState state = event.getLevel().getBlockState(pos);
             if (state.is(INGOT_BLOCK.get())){
                 if(state.getValue(IngotBlock.COUNT) == 64){
-
+                    for (int i = 1; i < event.getLevel().getMaxBuildHeight(); i++){
+                        BlockPos pos1 = pos.offset(0,i,0);
+                        if (event.getLevel().getBlockState(pos1).isAir()){
+                            event.getLevel().setBlockAndUpdate(pos1,INGOT_BLOCK.get().defaultBlockState());
+                            event.getLevel().getBlockEntity(pos1,INGOT_BLOCK_ENTITY.get()).ifPresent(be->{
+                                ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
+                                ((IngotBlockEntity) be).markForSync();
+                            });
+                            event.setUseItem(Event.Result.ALLOW);
+                            event.setCancellationResult(InteractionResult.CONSUME);
+                            event.setCanceled(true);
+                            break;
+                        } else if (event.getLevel().getBlockState(pos1).is(INGOT_BLOCK.get())){
+                            if (event.getLevel().getBlockState(pos1).getValue(IngotBlock.COUNT) == 64)continue;
+                            event.getLevel().getBlockEntity(pos1,INGOT_BLOCK_ENTITY.get()).ifPresent(be->{
+                                ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
+                                consumeItem(event.getItemStack(),player);
+                            });
+                            event.setUseItem(Event.Result.ALLOW);
+                            event.setCancellationResult(InteractionResult.CONSUME);
+                            event.setCanceled(true);
+                            break;
+                        }
+                    }
                 } else {
                     event.getLevel().getBlockEntity(pos,INGOT_BLOCK_ENTITY.get()).ifPresent(i->{
                         ((IngotBlockEntity)i).addIngot(event.getItemStack().copyWithCount(1));

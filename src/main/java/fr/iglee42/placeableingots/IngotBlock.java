@@ -83,6 +83,9 @@ public class IngotBlock extends BaseEntityBlock {
                 Block.popResource(level,pos,i);
             });
         }
+        if (level.getBlockState(pos.offset(0,1,0)).is(PlaceableIngots.INGOT_BLOCK.get())){
+            level.destroyBlock(pos.offset(0,1,0),true);
+        }
         super.onRemove(bs, level, pos, newState, p_60519_);
     }
 }

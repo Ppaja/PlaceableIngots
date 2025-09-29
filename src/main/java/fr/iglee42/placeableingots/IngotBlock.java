@@ -56,6 +56,7 @@ public class IngotBlock extends BaseEntityBlock {
     public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
         BlockEntity blockEntity = level.getBlockEntity(pos);
         if (blockEntity instanceof IngotBlockEntity ingotBlockEntity) {
+            ingotBlockEntity.flushDelayedSync();
             ingotBlockEntity.markForSync();
         }
     }

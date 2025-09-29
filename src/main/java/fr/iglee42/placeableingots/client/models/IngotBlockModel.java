@@ -22,6 +22,7 @@ import net.minecraftforge.registries.ForgeRegistries;
 
 import java.awt.*;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> {
@@ -46,8 +47,10 @@ public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> 
         float zSize = 6*pixelSize;
         TextureAtlasSprite sprite = Minecraft.getInstance().getTextureAtlas(BLOCKS_ATLAS).apply(new ResourceLocation(PlaceableIngots.MODID,"block/ingot"));
 
-        boolean fallbackFirstOnly = ibe.getIngots().isEmpty() && state.getValue(IngotBlock.COUNT) > 0;
-        int renderCount = fallbackFirstOnly ? 1 : Math.min(ibe.getIngots().size(), 64);
+        // Snapshot items to avoid concurrent modification or mid-frame size changes with Embeddium/Sodium-like renderers
+        List<ItemStack> items = List.copyOf(ibe.getIngots());
+        boolean fallbackFirstOnly = items.isEmpty() && state.getValue(IngotBlock.COUNT) > 0;
+        int renderCount = fallbackFirstOnly ? 1 : Math.min(items.size(), 64);
         for (int i = 0; i < renderCount; i++){
 
             poseStack.pushPose();
@@ -92,7 +95,12 @@ public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> 
                     color = 0xFFFFFFFF;
                 }
             } else {
-                ItemStack stack = ibe.getIngots().get(i);
+                if (i >= items.size()) {
+                    // Safety: underlying list changed mid-render; skip gracefully
+                    poseStack.popPose();
+                    continue;
+                }
+                ItemStack stack = items.get(i);
                 if (!colorCache.containsKey(stack.getItem())){
                     BakedModel itemModel = Minecraft.getInstance().getItemRenderer().getModel(stack,null,null,0);
                     Color currentColor = new Color(itemModel.getParticleIcon(ModelData.EMPTY).getPixelRGBA(0,0,0),true);

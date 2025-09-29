@@ -3,8 +3,10 @@ package fr.iglee42.placeableingots;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
@@ -19,7 +21,10 @@ import static fr.iglee42.placeableingots.IngotBlock.COUNT;
 
 public class IngotBlockEntity extends BlockEntity {
 
-    private List<ItemStack> ingots = new ArrayList<>();
+    private static final int DELAYED_SYNC_TICKS = 2;
+
+    private final List<ItemStack> ingots = new ArrayList<>();
+    private int delayedSyncCountdown;
 
     public IngotBlockEntity(BlockPos pos, BlockState state) {
         super(PlaceableIngots.INGOT_BLOCK_ENTITY.get(), pos, state);
@@ -36,8 +41,10 @@ public class IngotBlockEntity extends BlockEntity {
     @Override
     public void load(CompoundTag tag) {
         ingots.clear();
-        tag.getList("items",ListTag.TAG_COMPOUND).forEach(t-> ingots.add(ItemStack.of((CompoundTag) t)));
+        tag.getList("items", ListTag.TAG_COMPOUND).forEach(t -> ingots.add(ItemStack.of((CompoundTag) t)));
         super.load(tag);
+        delayedSyncCountdown = 0;
+        refreshClientRendering();
     }
 
     public List<ItemStack> getIngots() {
@@ -55,6 +62,9 @@ public class IngotBlockEntity extends BlockEntity {
 
         ingots.add(ingot.copyWithCount(1));
         markForSync();
+        if (ingots.size() == 1) {
+            scheduleDelayedSync();
+        }
         return true;
     }
 
@@ -82,14 +92,41 @@ public class IngotBlockEntity extends BlockEntity {
 
         ItemStack stack = ingots.remove(ingots.size() - 1);
         markForSync();
+        if (ingots.isEmpty()) {
+            delayedSyncCountdown = 0;
+        }
         return stack.copyWithCount(1);
     }
 
     public void markForSync()
     {
-        updateBlockState();
+        if (level == null || level.isClientSide()) {
+            return;
+        }
+
+        BlockState updatedState = updateBlockState();
         sendVanillaUpdatePacket();
+        level.sendBlockUpdated(worldPosition, updatedState, updatedState, Block.UPDATE_CLIENTS);
         setChanged();
+    }
+
+    private void scheduleDelayedSync() {
+        if (level == null || level.isClientSide()) {
+            return;
+        }
+
+        delayedSyncCountdown = Math.max(delayedSyncCountdown, DELAYED_SYNC_TICKS);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, IngotBlockEntity blockEntity) {
+        if (level.isClientSide() || blockEntity.delayedSyncCountdown <= 0) {
+            return;
+        }
+
+        blockEntity.delayedSyncCountdown--;
+        if (blockEntity.delayedSyncCountdown == 0) {
+            blockEntity.markForSync();
+        }
     }
 
     public final void sendVanillaUpdatePacket()
@@ -102,19 +139,47 @@ public class IngotBlockEntity extends BlockEntity {
         }
     }
 
-    private void updateBlockState() {
+    @Override
+    public void onDataPacket(Connection connection, ClientboundBlockEntityDataPacket packet)
+    {
+        super.onDataPacket(connection, packet);
+        refreshClientRendering();
+    }
+
+    @Override
+    public void handleUpdateTag(CompoundTag tag)
+    {
+        super.handleUpdateTag(tag);
+        refreshClientRendering();
+    }
+
+    private BlockState updateBlockState() {
         if (level == null) {
-            return;
+            return getBlockState();
         }
 
         BlockState currentState = level.getBlockState(worldPosition);
         if (!(currentState.getBlock() instanceof IngotBlock)) {
-            return;
+            return currentState;
         }
 
         int ingotCount = Math.min(ingots.size(), 64);
         if (currentState.getValue(COUNT) != ingotCount) {
-            level.setBlock(worldPosition, currentState.setValue(COUNT, ingotCount), Block.UPDATE_CLIENTS);
+            BlockState updatedState = currentState.setValue(COUNT, ingotCount);
+            level.setBlock(worldPosition, updatedState, Block.UPDATE_CLIENTS);
+            return updatedState;
+        }
+
+        return currentState;
+    }
+
+    private void refreshClientRendering()
+    {
+        if (level != null && level.isClientSide())
+        {
+            requestModelDataUpdate();
+            BlockState state = getBlockState();
+            level.sendBlockUpdated(worldPosition, state, state, Block.UPDATE_CLIENTS);
         }
     }
 }

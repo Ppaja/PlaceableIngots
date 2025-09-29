@@ -1,6 +1,8 @@
 package fr.iglee42.placeableingots;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -48,6 +50,15 @@ public class IngotBlock extends BaseEntityBlock {
     @Override
     public @Nullable BlockEntity newBlockEntity(BlockPos blockPos, BlockState blockState) {
         return new IngotBlockEntity(blockPos,blockState);
+    }
+
+    @Override
+    public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        BlockEntity blockEntity = level.getBlockEntity(pos);
+        if (blockEntity instanceof IngotBlockEntity ingotBlockEntity) {
+            ingotBlockEntity.flushDelayedSync();
+            ingotBlockEntity.markForSync();
+        }
     }
 
     @Override

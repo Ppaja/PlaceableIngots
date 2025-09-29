@@ -26,6 +26,8 @@ public class IngotBlockEntity extends BlockEntity {
     private final List<ItemStack> ingots = new ArrayList<>();
     private int delayedSyncCountdown;
 
+
+
     public IngotBlockEntity(BlockPos pos, BlockState state) {
         super(PlaceableIngots.INGOT_BLOCK_ENTITY.get(), pos, state);
     }
@@ -44,6 +46,11 @@ public class IngotBlockEntity extends BlockEntity {
         tag.getList("items", ListTag.TAG_COMPOUND).forEach(t -> ingots.add(ItemStack.of((CompoundTag) t)));
         super.load(tag);
         delayedSyncCountdown = 0;
+
+
+        delayedSyncQueued = false;
+
+
         refreshClientRendering();
     }
 
@@ -60,10 +67,17 @@ public class IngotBlockEntity extends BlockEntity {
             return false;
         }
 
+        boolean scheduleDelayedRefresh = ingots.isEmpty();
+
         ingots.add(ingot.copyWithCount(1));
         markForSync();
         if (ingots.size() == 1) {
             scheduleDelayedSync();
+
+
+        if (scheduleDelayedRefresh) {
+            queueDelayedSync();
+
         }
         return true;
     }
@@ -94,6 +108,8 @@ public class IngotBlockEntity extends BlockEntity {
         markForSync();
         if (ingots.isEmpty()) {
             delayedSyncCountdown = 0;
+            delayedSyncQueued = false;
+
         }
         return stack.copyWithCount(1);
     }
@@ -109,6 +125,7 @@ public class IngotBlockEntity extends BlockEntity {
         level.sendBlockUpdated(worldPosition, updatedState, updatedState, Block.UPDATE_CLIENTS);
         setChanged();
     }
+
 
     private void scheduleDelayedSync() {
         if (level == null || level.isClientSide()) {
@@ -127,6 +144,35 @@ public class IngotBlockEntity extends BlockEntity {
         if (blockEntity.delayedSyncCountdown == 0) {
             blockEntity.markForSync();
         }
+
+    private void queueDelayedSync()
+    {
+        if (delayedSyncQueued || level == null || level.isClientSide()) {
+            return;
+        }
+
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+
+        BlockState state = getBlockState();
+        if (!(state.getBlock() instanceof IngotBlock)) {
+            return;
+        }
+
+        delayedSyncQueued = true;
+        serverLevel.scheduleTick(worldPosition, state.getBlock(), 2);
+    }
+
+    public void flushDelayedSync()
+    {
+        if (!delayedSyncQueued || level == null || level.isClientSide()) {
+            return;
+        }
+
+        delayedSyncQueued = false;
+        markForSync();
+
     }
 
     public final void sendVanillaUpdatePacket()
@@ -180,6 +226,9 @@ public class IngotBlockEntity extends BlockEntity {
             requestModelDataUpdate();
             BlockState state = getBlockState();
             level.sendBlockUpdated(worldPosition, state, state, Block.UPDATE_CLIENTS);
+
         }
+
+        return currentState;
     }
 }

@@ -8,6 +8,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.BlockPos.MutableBlockPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -137,6 +138,10 @@ public class PlaceableIngots {
         if (!added) {
             event.getLevel().removeBlock(placementPos, false);
             return false;
+        }
+
+        if (event.getLevel() instanceof ServerLevel serverLevel) {
+            serverLevel.scheduleTick(placementPos, INGOT_BLOCK.get(), 1);
         }
 
         acknowledgeIngotPlacement(event, player);

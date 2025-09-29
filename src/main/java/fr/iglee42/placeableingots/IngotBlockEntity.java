@@ -3,6 +3,7 @@ package fr.iglee42.placeableingots;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
@@ -36,8 +37,9 @@ public class IngotBlockEntity extends BlockEntity {
     @Override
     public void load(CompoundTag tag) {
         ingots.clear();
-        tag.getList("items",ListTag.TAG_COMPOUND).forEach(t-> ingots.add(ItemStack.of((CompoundTag) t)));
+        tag.getList("items", ListTag.TAG_COMPOUND).forEach(t -> ingots.add(ItemStack.of((CompoundTag) t)));
         super.load(tag);
+        refreshClientRendering();
     }
 
     public List<ItemStack> getIngots() {
@@ -107,6 +109,23 @@ public class IngotBlockEntity extends BlockEntity {
         }
     }
 
+
+    @Override
+    public void onDataPacket(Connection connection, ClientboundBlockEntityDataPacket packet)
+    {
+        super.onDataPacket(connection, packet);
+        refreshClientRendering();
+    }
+
+    @Override
+    public void handleUpdateTag(CompoundTag tag)
+    {
+        super.handleUpdateTag(tag);
+        refreshClientRendering();
+    }
+
+
+
     private BlockState updateBlockState() {
         if (level == null) {
             return getBlockState();
@@ -122,6 +141,20 @@ public class IngotBlockEntity extends BlockEntity {
             BlockState updatedState = currentState.setValue(COUNT, ingotCount);
             level.setBlock(worldPosition, updatedState, Block.UPDATE_CLIENTS);
             return updatedState;
+
+        }
+
+        return currentState;
+    }
+
+    private void refreshClientRendering()
+    {
+        if (level != null && level.isClientSide())
+        {
+            requestModelDataUpdate();
+            BlockState state = getBlockState();
+            level.sendBlockUpdated(worldPosition, state, state, Block.UPDATE_CLIENTS);
+
         }
 
         return currentState;

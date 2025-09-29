@@ -87,8 +87,13 @@ public class IngotBlockEntity extends BlockEntity {
 
     public void markForSync()
     {
-        updateBlockState();
+        if (level == null || level.isClientSide()) {
+            return;
+        }
+
+        BlockState updatedState = updateBlockState();
         sendVanillaUpdatePacket();
+        level.sendBlockUpdated(worldPosition, updatedState, updatedState, Block.UPDATE_CLIENTS);
         setChanged();
     }
 
@@ -102,19 +107,23 @@ public class IngotBlockEntity extends BlockEntity {
         }
     }
 
-    private void updateBlockState() {
+    private BlockState updateBlockState() {
         if (level == null) {
-            return;
+            return getBlockState();
         }
 
         BlockState currentState = level.getBlockState(worldPosition);
         if (!(currentState.getBlock() instanceof IngotBlock)) {
-            return;
+            return currentState;
         }
 
         int ingotCount = Math.min(ingots.size(), 64);
         if (currentState.getValue(COUNT) != ingotCount) {
-            level.setBlock(worldPosition, currentState.setValue(COUNT, ingotCount), Block.UPDATE_CLIENTS);
+            BlockState updatedState = currentState.setValue(COUNT, ingotCount);
+            level.setBlock(worldPosition, updatedState, Block.UPDATE_CLIENTS);
+            return updatedState;
         }
+
+        return currentState;
     }
 }

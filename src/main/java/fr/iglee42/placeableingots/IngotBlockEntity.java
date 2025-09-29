@@ -1,22 +1,16 @@
 package fr.iglee42.placeableingots;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
-import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -50,9 +44,18 @@ public class IngotBlockEntity extends BlockEntity {
         return ingots;
     }
 
-    public void addIngot(ItemStack ingot){
-        ingots.add(ingot);
+    public boolean addIngot(ItemStack ingot){
+        if (ingot.isEmpty()) {
+            return false;
+        }
+
+        if (ingots.size() >= 64) {
+            return false;
+        }
+
+        ingots.add(ingot.copyWithCount(1));
         markForSync();
+        return true;
     }
 
 
@@ -73,6 +76,10 @@ public class IngotBlockEntity extends BlockEntity {
 
 
     public ItemStack removeLastIngot() {
+        if (ingots.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+
         ItemStack stack = ingots.remove(ingots.size() - 1);
         markForSync();
         return stack.copyWithCount(1);
@@ -80,6 +87,7 @@ public class IngotBlockEntity extends BlockEntity {
 
     public void markForSync()
     {
+        updateBlockState();
         sendVanillaUpdatePacket();
         setChanged();
     }
@@ -91,7 +99,22 @@ public class IngotBlockEntity extends BlockEntity {
         if (packet != null && level instanceof ServerLevel serverLevel)
         {
             serverLevel.getChunkSource().chunkMap.getPlayers(new ChunkPos(pos), false).forEach(e -> e.connection.send(packet));
-            if (!ingots.isEmpty())serverLevel.setBlockAndUpdate(pos,getBlockState().setValue(COUNT,ingots.size()));
+        }
+    }
+
+    private void updateBlockState() {
+        if (level == null) {
+            return;
+        }
+
+        BlockState currentState = level.getBlockState(worldPosition);
+        if (!(currentState.getBlock() instanceof IngotBlock)) {
+            return;
+        }
+
+        int ingotCount = Math.min(ingots.size(), 64);
+        if (currentState.getValue(COUNT) != ingotCount) {
+            level.setBlock(worldPosition, currentState.setValue(COUNT, ingotCount), Block.UPDATE_CLIENTS);
         }
     }
 }

@@ -54,10 +54,12 @@ public class IngotBlock extends BaseEntityBlock {
 
     @Override
     public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
-        BlockEntity blockEntity = level.getBlockEntity(pos);
-        if (blockEntity instanceof IngotBlockEntity ingotBlockEntity) {
-            ingotBlockEntity.markForSync();
-        }
+        // KORREKTUR: Die alte Logik hier war fehlerhaft.
+        // Anstatt zu versuchen, die Daten vom Server erneut zu synchronisieren (was fehlschlug, da der Server-Status bereits korrekt war),
+        // erzwingen wir nun direkt beim Client ein Update des Blocks.
+        // Dies veranlasst den Client, den Block neu zu zeichnen, wobei die inzwischen erhaltenen Barren-Daten korrekt verwendet werden.
+        // Die "3" als Flag ist eine Kombination aus "UPDATE_CLIENTS" und "UPDATE_NEIGHBORS".
+        level.sendBlockUpdated(pos, state, state, 3);
     }
 
     @Override

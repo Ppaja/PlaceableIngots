@@ -17,6 +17,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.client.model.data.ModelData;
+import fr.iglee42.placeableingots.Network;
 import net.minecraftforge.registries.ForgeRegistries;
 
 import java.awt.*;
@@ -45,38 +46,78 @@ public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> 
         float zSize = 6*pixelSize;
         TextureAtlasSprite sprite = Minecraft.getInstance().getTextureAtlas(BLOCKS_ATLAS).apply(new ResourceLocation(PlaceableIngots.MODID,"block/ingot"));
 
-        for (int i = 0; i < state.getValue(IngotBlock.COUNT); i++){
-            if (i >= ibe.getIngots().size()) {
-                continue;
-            }
+        boolean fallbackFirstOnly = ibe.getIngots().isEmpty() && state.getValue(IngotBlock.COUNT) > 0;
+        int renderCount = fallbackFirstOnly ? 1 : Math.min(ibe.getIngots().size(), 64);
+        for (int i = 0; i < renderCount; i++){
 
             poseStack.pushPose();
-            ItemStack stack = ibe.getIngots().get(i);
             int color;
-            if (!colorCache.containsKey(stack.getItem())){
-                BakedModel itemModel = Minecraft.getInstance().getItemRenderer().getModel(stack,null,null,0);
-                Color currentColor = new Color(itemModel.getParticleIcon(ModelData.EMPTY).getPixelRGBA(0,0,0),true);
-                int currentX = 7;
-                int currentY = 7;
-                while (currentColor.getAlpha() < 255){
-                    currentX++;
-                    if (currentX >= itemModel.getParticleIcon(ModelData.EMPTY).contents().width()) {
-                        currentX = 0;
-                        currentY++;
-                    }
-                    int clColor = itemModel.getParticleIcon(ModelData.EMPTY).contents().getOriginalImage().getPixelRGBA(currentX,currentY);
-
-                    int red = (clColor) & 0xFF;    // Décalage 0 bits (8 premiers bits)
-                    int green = (clColor >> 8) & 0xFF; // Décalage 8 bits
-                    int blue = (clColor >> 16) & 0xFF; // Décalage 16 bits
-                    int alpha = (clColor >> 24) & 0xFF; // Décalage 24 bits
-
-                    currentColor = new Color(red,green,blue,alpha);
+            if (fallbackFirstOnly) {
+                // Try to colorize using client hint first, then last known item id from BE
+                Item item = null;
+                if (Network.CLIENT_HINT.containsKey(blockEntity.getBlockPos())) {
+                    item = ForgeRegistries.ITEMS.getValue(Network.CLIENT_HINT.get(blockEntity.getBlockPos()));
                 }
-                color = currentColor.getRGB();
-                colorCache.put(stack.getItem(),color);
+                if (item == null && ibe.getLastItemId() != null) {
+                    item = ForgeRegistries.ITEMS.getValue(ibe.getLastItemId());
+                }
+                if (item != null) {
+                    if (!colorCache.containsKey(item)){
+                        ItemStack stack = new ItemStack(item);
+                        BakedModel itemModel = Minecraft.getInstance().getItemRenderer().getModel(stack,null,null,0);
+                        Color currentColor = new Color(itemModel.getParticleIcon(ModelData.EMPTY).getPixelRGBA(0,0,0),true);
+                        int currentX = 7;
+                        int currentY = 7;
+                        while (currentColor.getAlpha() < 255){
+                            currentX++;
+                            if (currentX >= itemModel.getParticleIcon(ModelData.EMPTY).contents().width()) {
+                                currentX = 0;
+                                currentY++;
+                            }
+                            int clColor = itemModel.getParticleIcon(ModelData.EMPTY).contents().getOriginalImage().getPixelRGBA(currentX,currentY);
+
+                            int red = (clColor) & 0xFF;
+                            int green = (clColor >> 8) & 0xFF;
+                            int blue = (clColor >> 16) & 0xFF;
+                            int alpha = (clColor >> 24) & 0xFF;
+
+                            currentColor = new Color(red,green,blue,alpha);
+                        }
+                        color = currentColor.getRGB();
+                        colorCache.put(item,color);
+                    } else {
+                        color = colorCache.get(item);
+                    }
+                } else {
+                    color = 0xFFFFFFFF;
+                }
             } else {
-                color = colorCache.get(stack.getItem());
+                ItemStack stack = ibe.getIngots().get(i);
+                if (!colorCache.containsKey(stack.getItem())){
+                    BakedModel itemModel = Minecraft.getInstance().getItemRenderer().getModel(stack,null,null,0);
+                    Color currentColor = new Color(itemModel.getParticleIcon(ModelData.EMPTY).getPixelRGBA(0,0,0),true);
+                    int currentX = 7;
+                    int currentY = 7;
+                    while (currentColor.getAlpha() < 255){
+                        currentX++;
+                        if (currentX >= itemModel.getParticleIcon(ModelData.EMPTY).contents().width()) {
+                            currentX = 0;
+                            currentY++;
+                        }
+                        int clColor = itemModel.getParticleIcon(ModelData.EMPTY).contents().getOriginalImage().getPixelRGBA(currentX,currentY);
+
+                        int red = (clColor) & 0xFF;
+                        int green = (clColor >> 8) & 0xFF;
+                        int blue = (clColor >> 16) & 0xFF;
+                        int alpha = (clColor >> 24) & 0xFF;
+
+                        currentColor = new Color(red,green,blue,alpha);
+                    }
+                    color = currentColor.getRGB();
+                    colorCache.put(stack.getItem(),color);
+                } else {
+                    color = colorCache.get(stack.getItem());
+                }
             }
             int layer = Math.floorDiv(i , 8);
             int rowIndex = (i - layer*8)  % 4;
@@ -109,6 +150,8 @@ public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> 
 
     @Override
     public int faces(BlockState state) {
-        return state.getValue(IngotBlock.COUNT)*6;
+        // Return a safe upper bound so the buffer is always large enough,
+        // avoiding under-allocation when BE data arrives a frame later
+        return 64 * 6;
     }
 }

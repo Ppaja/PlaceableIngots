@@ -66,7 +66,9 @@ public class PlaceableIngots {
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
-
+        event.enqueueWork(() -> {
+            Network.init();
+        });
     }
 
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
@@ -90,6 +92,7 @@ public class PlaceableIngots {
         }
 
         BlockPos clickedPos = event.getHitVec().getBlockPos();
+        LOGGER.info("[PI] RightClickBlock: server-side, item={}, pos={}, face={}, sneaking=YES", heldStack.getItem(), clickedPos, event.getFace());
         if (tryAddToExistingStacks(event, clickedPos, heldStack, player)) {
             return;
         }
@@ -116,6 +119,7 @@ public class PlaceableIngots {
             }
 
             if (event.getLevel().getBlockEntity(cursor, INGOT_BLOCK_ENTITY.get()).map(be -> ((IngotBlockEntity) be).addIngot(heldStack)).orElse(false)) {
+                LOGGER.info("[PI] Added ingot to existing stack at {}", cursor);
                 consumeItem(heldStack, player);
                 acknowledgeIngotPlacement(event, player);
                 return true;
@@ -130,18 +134,63 @@ public class PlaceableIngots {
             return false;
         }
 
+        LOGGER.info("[PI] Placing new ingot_block at {}", placementPos);
         event.getLevel().setBlockAndUpdate(placementPos, INGOT_BLOCK.get().defaultBlockState());
         boolean added = event.getLevel().getBlockEntity(placementPos, INGOT_BLOCK_ENTITY.get())
                 .map(be -> ((IngotBlockEntity) be).addIngot(heldStack))
                 .orElse(false);
 
         if (!added) {
+            LOGGER.warn("[PI] Failed to add first ingot to new stack at {} — removing block", placementPos);
             event.getLevel().removeBlock(placementPos, false);
             return false;
         }
 
+        // Removed previous workaround (add+remove) as it did not resolve the issue and added complexity
+
+        // Push a BE sync now
+        event.getLevel().getBlockEntity(placementPos, INGOT_BLOCK_ENTITY.get())
+                .ifPresent(be -> ((IngotBlockEntity) be).markForSync());
+
+        // Also directly send the BE packet to the placing player to avoid missing initial client update
+        if (player instanceof net.minecraft.server.level.ServerPlayer sp) {
+            event.getLevel().getBlockEntity(placementPos, INGOT_BLOCK_ENTITY.get()).ifPresent(be -> {
+                net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket pkt = ((IngotBlockEntity) be).getUpdatePacket();
+                if (pkt == null) {
+                    pkt = net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(be);
+                }
+                if (pkt != null) {
+                    sp.connection.send(pkt);
+                }
+                // Send first-ingot hint (item id) to client for immediate fallback coloring
+                Network.sendFirstIngotHint(sp, placementPos, net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(heldStack.getItem()));
+            });
+        }
+
+        // Additionally, force a block update immediately to flush client render
+        BlockState postAddState = event.getLevel().getBlockState(placementPos);
+        LOGGER.info("[PI] Post-add state at {}: COUNT={}", placementPos, postAddState.hasProperty(IngotBlock.COUNT) ? postAddState.getValue(IngotBlock.COUNT) : -1);
+        event.getLevel().sendBlockUpdated(placementPos, postAddState, postAddState, Block.UPDATE_CLIENTS);
+
         if (event.getLevel() instanceof ServerLevel serverLevel) {
             serverLevel.scheduleTick(placementPos, INGOT_BLOCK.get(), 1);
+            // Extra small delay to cover race conditions on first placement render
+            serverLevel.scheduleTick(placementPos, INGOT_BLOCK.get(), 3);
+            LOGGER.info("[PI] Scheduled ticks for {} (1 and 3)", placementPos);
+
+            // Schedule a delayed explicit BE packet resend to all tracking players
+            serverLevel.getServer().execute(() -> {
+                event.getLevel().getBlockEntity(placementPos, INGOT_BLOCK_ENTITY.get()).ifPresent(be -> {
+                    net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket tmp = ((IngotBlockEntity) be).getUpdatePacket();
+                    if (tmp == null) tmp = net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(be);
+                    final net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket finalPkt = tmp;
+                    if (finalPkt != null) {
+                        serverLevel.getChunkSource().chunkMap.getPlayers(new net.minecraft.world.level.ChunkPos(placementPos), false)
+                                .forEach(p -> p.connection.send(finalPkt));
+                        LOGGER.info("[PI] Delayed resend: BE packet sent to tracking players at {}", placementPos);
+                    }
+                });
+            });
         }
 
         acknowledgeIngotPlacement(event, player);

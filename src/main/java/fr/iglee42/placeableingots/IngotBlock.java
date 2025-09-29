@@ -57,6 +57,7 @@ public class IngotBlock extends BaseEntityBlock {
         BlockEntity blockEntity = level.getBlockEntity(pos);
         if (blockEntity instanceof IngotBlockEntity ingotBlockEntity) {
             ingotBlockEntity.flushDelayedSync();
+            ingotBlockEntity.markForSync();
         }
     }
 

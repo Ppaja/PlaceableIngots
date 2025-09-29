@@ -40,7 +40,9 @@ public class IngotBlockEntity extends BlockEntity {
         ingots.clear();
         tag.getList("items", ListTag.TAG_COMPOUND).forEach(t -> ingots.add(ItemStack.of((CompoundTag) t)));
         super.load(tag);
+
         delayedSyncQueued = false;
+
         refreshClientRendering();
     }
 
@@ -191,5 +193,7 @@ public class IngotBlockEntity extends BlockEntity {
             BlockState state = getBlockState();
             level.sendBlockUpdated(worldPosition, state, state, Block.UPDATE_CLIENTS);
         }
+
+        return currentState;
     }
 }

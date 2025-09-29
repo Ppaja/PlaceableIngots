@@ -109,6 +109,7 @@ public class IngotBlockEntity extends BlockEntity {
         }
     }
 
+
     @Override
     public void onDataPacket(Connection connection, ClientboundBlockEntityDataPacket packet)
     {
@@ -122,6 +123,8 @@ public class IngotBlockEntity extends BlockEntity {
         super.handleUpdateTag(tag);
         refreshClientRendering();
     }
+
+
 
     private BlockState updateBlockState() {
         if (level == null) {
@@ -138,6 +141,7 @@ public class IngotBlockEntity extends BlockEntity {
             BlockState updatedState = currentState.setValue(COUNT, ingotCount);
             level.setBlock(worldPosition, updatedState, Block.UPDATE_CLIENTS);
             return updatedState;
+
         }
 
         return currentState;
@@ -150,6 +154,9 @@ public class IngotBlockEntity extends BlockEntity {
             requestModelDataUpdate();
             BlockState state = getBlockState();
             level.sendBlockUpdated(worldPosition, state, state, Block.UPDATE_CLIENTS);
+
         }
+
+        return currentState;
     }
 }

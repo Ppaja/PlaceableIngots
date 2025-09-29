@@ -1,0 +1,194 @@
+Also diese Mod (srccode von github, src ordner) funktioniert nicht ingame. 
+Wenn ich SHIFT + rechtsklick mache entsteht ein leeres itemfeld am boden, klick ich nochmal erscheint ein barren am boden, bau ichs ab hab ich 2 barren aus einem gemacht (double glich)
+
+In den kommentaren der mod finde ich:
+"Another Issue I can't pinpoint what mods interact with it, and I wanna know if anyone in the community has encountered it; Right clicking on the floor with an ingot creates an empty stack, but doesn't consume the first ingot, essentially duplicating one ingot. Right clicking the empty stack places 2 ingots while consuming only one. "
+
+Also haben auch andere dieses Problem. 
+
+Da der sourcecode da ist, können wir herausfinden warum das passiert? Und wie man die Mod fixen können?
+Nachgedacht für 33s
+ChatGPT:
+
+Kurzfassung: Der Duplikations-Bug entsteht, weil in zwei Platzier-Zweigen das Item nicht verbraucht wird. Das Item landet im Block (Serverseite), bleibt aber zugleich im Spieler-Stack (weil kein Verbrauch), was wie ein „leeres Feld“/Geister-Stack wirkt und beim nächsten Rechtsklick zu einem „aus 1 mach 2“-Effekt führt. Fix: in beiden Zweigen nach addIngot(copyWithCount(1)) auch wirklich das Item schrumpfen.
+
+Ursache (belegt im Code)
+
+In PlaceableIngots.useItemOnBlock(...) wird nur in manchen Pfaden consumeItem(...) gerufen. Konkret fehlt der Verbrauch
+
+wenn ein neuer oberer Ingot-Block gesetzt wird, weil der darunterliegende voll ist, und
+
+wenn neben dem anvisierten Block in die Luft platziert wird (erster Ingot auf leerem Feld).
+Siehe die beiden markierten Stellen ohne consumeItem(...) in PlaceableIngots.java. 
+
+src_merged_20250929_085252
+
+Präzise Code-Änderungen
+
+Datei: main/java/fr/iglee42/placeableingots/PlaceableIngots.java 
+
+src_merged_20250929_085252
+
+Zweig „oberer Block wird neu gesetzt“
+Direkt nach:
+
+((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
+((IngotBlockEntity) be).markForSync();
+
+
+einfügen:
+
+consumeItem(event.getItemStack(), player);
+
+
+Zweig „neben den anvisierten Block in Luft setzen“ (erster Ingot)
+Direkt nach:
+
+((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
+((IngotBlockEntity) be).markForSync();
+
+
+einfügen:
+
+consumeItem(event.getItemStack(), player);
+
+
+Optional, aber empfehlenswert:
+
+Das nachgeschaltete markForSync() ist redundant, weil addIngot(...) bereits markForSync() aufruft. Sie können die zweite Zeile gefahrlos entfernen, um doppelte Pakete zu vermeiden:
+
+- ((IngotBlockEntity) be).markForSync();
+
+Warum das den Bug beseitigt
+
+Der Event-Handler läuft serverseitig und setzt den Block bzw. erhöht den internen Zähler sofort. Ohne Item-Verbrauch bleibt der Client-Stack unverändert. Beim nächsten Klick wird erneut „ein einzelnes Ingot“ hinzugefügt, obwohl der ursprüngliche Stack nie schrumpfte, was als „Dupe“ sichtbar wird. Der Einbau von consumeItem(...) synchronisiert den logischen Verbrauch mit der bereits erfolgten Block-Änderung. 
+
+src_merged_20250929_085252
+
+Nebenwirkungen und Best Practices
+
+Doppelklick durch Off-Hand vermeiden: Falls Sie Off-Hand-Interaktionen ausschließen wollen, prüfen Sie zusätzlich event.getHand() == InteractionHand.MAIN_HAND am Anfang des Handlers. Das ist in Ihrer Logik derzeit nicht notwendig, reduziert aber Edge Cases mit Fackeln/Schildern in der Zweithand.
+
+Kleinigkeit: Statt setCount(getCount() - 1) können Sie stack.shrink(1) verwenden; ist idiomatischer und robuster.
+
+Netzwerktraffic: Ein markForSync() pro Änderung genügt. Entfernen Sie die redundanten Aufrufe wie oben erwähnt.
+
+Funktionaler Test (ohne Ratespiel)
+
+Welt starten, ein Ingot in die Hand, Sneak + Rechtsklick auf den Boden: Es erscheint der Ingot-Block mit COUNT=1, der Spieler-Stack wird von 1 auf 0 reduziert. Kein „leeres Feld“.
+
+Einen vollen Stapel (64) erzeugen, erneut Sneak + Rechtsklick auf denselben Block: Oberer Block wird erstellt, Spieler-Stack schrumpft um 1.
+
+Abbautest: Block abbauen, es droppen exakt so viele Ingots, wie platziert wurden.
+
+Wenn Sie die beiden Einfügungen vornehmen und die redundanten markForSync() entfernen, ist der Dupe weg.
+
+Quellen
+Du:
+Ok aber wenn das Problem nur wäre dass das item vom spieler nicht entfernt wird dann würde ja trotzdem auf dem boden direkt ein ingot liegen mit 3d textur. Tut es aber nicht, sondern es entsteht ein Feld aber nix drin
+ChatGPT:
+Nachgedacht für 1m 16s
+
+Ihr Symptom „leeres Feld ohne 3D-Ingot“ entsteht zusätzlich zum Dupe nicht nur durch fehlenden Verbrauch, sondern durch eine Render-Desynchronisation: Das Blockstate-Zählerfeld COUNT wird auf dem Server gesetzt, aber der Client rendert zunächst mit einem BlockEntity-Inventar, das noch leer ist. Das Modell rendert dann „nichts“, weil es über COUNT iteriert, aber bei leerer Ingot-Liste jedes Mal continue trifft. Erst beim nächsten Klick ist genug Synchronisation passiert, dann „taucht“ das Ingot auf.
+
+Man muss deshalb zwei Dinge korrigieren:
+
+fehlender Verbrauch im Platzier-Pfad (sonst Dupe), und
+
+die Reihenfolge/Logik der Synchronisation so ändern, dass COUNT und die BE-Daten atomar beim Client landen bzw. eine sichere Neu-Berechnung des ModelData auslösen.
+
+Im Detail:
+
+A) Verbrauch in allen Platzierzweigen sicherstellen
+
+Datei: main/java/fr/iglee42/placeableingots/PlaceableIngots.java
+Problemstellen (Platzieren in Luft daneben und „neuer oberer Block“): dort fehlt consumeItem(...). 
+
+src_merged_20250929_085252
+
+Einfügen
+
+Nach dem Setzen und Befüllen der BE jeweils direkt den Verbrauch:
+
+- ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
+- ((IngotBlockEntity) be).markForSync();
++ ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
++ consumeItem(event.getItemStack(), player);
+
+
+Diese Änderung ist zweimal nötig:
+
+Pfad „oberer Block in Luft erstellt“ (neuer Stack über vollem): nach setBlockAndUpdate(pos1, ...) und addIngot(...). 
+
+src_merged_20250929_085252
+
+Pfad „in Luft neben anvisierten Block“ (erster Ingot auf leerem Feld): nach setBlockAndUpdate(pos, ...) und addIngot(...). 
+
+src_merged_20250929_085252
+
+Zusatz: Die unmittelbar folgenden markForSync()-Aufrufe sind redundant, weil addIngot(...) bereits synchronisiert. Diese Zeilen können entfernt werden. 
+
+src_merged_20250929_085252
+
+B) Synchronisation robust machen, damit kein „leeres Feld“ gerendert wird
+
+Datei: main/java/fr/iglee42/placeableingots/IngotBlockEntity.java
+
+Aktuell schickt markForSync() erst das BlockEntity-Paket und setzt danach per setBlockAndUpdate das COUNT-State, und nur wenn die Liste nicht leer ist. Das kann zu einem Frame mit COUNT>0 aber leerer Liste am Client führen, worauf das Modell nichts zeichnet. 
+
+src_merged_20250929_085252
+
+Geänderte Zeilen in sendVanillaUpdatePacket():
+-    public final void sendVanillaUpdatePacket()
+-    {
+-        final ClientboundBlockEntityDataPacket packet = getUpdatePacket();
+-        final BlockPos pos = getBlockPos();
+-        if (packet != null && level instanceof ServerLevel serverLevel)
+-        {
+-            serverLevel.getChunkSource().chunkMap.getPlayers(new ChunkPos(pos), false).forEach(e -> e.connection.send(packet));
+-            if (!ingots.isEmpty())serverLevel.setBlockAndUpdate(pos,getBlockState().setValue(COUNT,ingots.size()));
+-        }
+-    }
++    public final void sendVanillaUpdatePacket()
++    {
++        final ClientboundBlockEntityDataPacket packet = getUpdatePacket();
++        final BlockPos pos = getBlockPos();
++        if (packet != null && level instanceof ServerLevel serverLevel)
++        {
++            // 1) State immer auf tatsächliche Größe setzen (auch 0), um ModelData neu zu triggern
++            serverLevel.setBlockAndUpdate(pos, getBlockState().setValue(COUNT, ingots.size()));
++            // 2) Danach BE-Daten senden
++            serverLevel.getChunkSource().chunkMap.getPlayers(new ChunkPos(pos), false)
++                    .forEach(e -> e.connection.send(packet));
++        }
++    }
+
+
+src_merged_20250929_085252
+
+Wirkung: Der Client bekommt zuerst die State-Änderung, die garantiert eine Neuabfrage des ModelData triggert, und anschließend das BE-Paket mit der Ingot-Liste. Damit fällt der Zustand „COUNT > 0, Liste leer“ im Renderpfad weg.
+
+C) Kleinere Korrekturen/Best Practices
+
+In consumeItem(...) statt setCount(getCount()-1) lieber stack.shrink(1) verwenden. Ist robuster, handhabt 0-Stacks sauberer. (Semantik identisch, reine Hygiene.) 
+
+src_merged_20250929_085252
+
+Optional: Interaktion auf Main-Hand begrenzen, um Off-Hand-Doppelfeuer zu vermeiden:
+
+if (event.getHand() != InteractionHand.MAIN_HAND) return;
+
+
+direkt am Anfang des Event-Handlers. 
+
+src_merged_20250929_085252
+
+Warum das Ihr konkretes Symptom beseitigt
+
+A) verhindert das Duplizieren, weil der Spieler-Stack wirklich schrumpft.
+
+B) verhindert das „leere Feld“, weil der Client beim ersten Tick ein konsistentes Paar aus COUNT == ingots.size() bekommt. Der Renderer in IngotBlockModel iteriert bis COUNT und findet für jeden Index ≤ Größe einen realen Eintrag; die frühere Lücke entsteht dort, wo COUNT schon 1 ist, die Liste aber noch 0 liefert und jede Iteration mit continue endet. 
+
+src_merged_20250929_085252
+
+Setzen Sie diese punktuellen Änderungen um, und sowohl der Dupe als auch das „leere Feld“ sind erledigt, ohne Nebenwirkungen auf Drops oder Abbauverhalten.

@@ -6,12 +6,11 @@ import fr.iglee42.placeableingots.config.ClientConfig;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.BlockPos.MutableBlockPos;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
@@ -74,68 +73,92 @@ public class PlaceableIngots {
 
     @SubscribeEvent
     public void useItemOnBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getLevel().isClientSide())return;
+        if (event.getLevel().isClientSide()) {
+            return;
+        }
+
         Player player = event.getEntity();
-        if (event.getItemStack().is(Tags.Items.INGOTS) && player.mayBuild() && player.isCrouching()){
-            BlockPos pos = event.getHitVec().getBlockPos();
-            BlockState state = event.getLevel().getBlockState(pos);
-            if (state.is(INGOT_BLOCK.get())){
-                if(state.getValue(IngotBlock.COUNT) == 64){
-                    for (int i = 1; i < event.getLevel().getMaxBuildHeight(); i++){
-                        BlockPos pos1 = pos.offset(0,i,0);
-                        if (event.getLevel().getBlockState(pos1).isAir()){
-                            event.getLevel().setBlockAndUpdate(pos1,INGOT_BLOCK.get().defaultBlockState());
-                            event.getLevel().getBlockEntity(pos1,INGOT_BLOCK_ENTITY.get()).ifPresent(be->{
-                                ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
-                                ((IngotBlockEntity) be).markForSync();
-                            });
-                            event.setUseItem(Event.Result.ALLOW);
-                            event.setCancellationResult(InteractionResult.CONSUME);
-                            event.setCanceled(true);
-                            break;
-                        } else if (event.getLevel().getBlockState(pos1).is(INGOT_BLOCK.get())){
-                            if (event.getLevel().getBlockState(pos1).getValue(IngotBlock.COUNT) == 64)continue;
-                            event.getLevel().getBlockEntity(pos1,INGOT_BLOCK_ENTITY.get()).ifPresent(be->{
-                                ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
-                                consumeItem(event.getItemStack(),player);
-                            });
-                            event.setUseItem(Event.Result.ALLOW);
-                            event.setCancellationResult(InteractionResult.CONSUME);
-                            event.setCanceled(true);
-                            break;
-                        }
-                    }
-                } else {
-                    event.getLevel().getBlockEntity(pos,INGOT_BLOCK_ENTITY.get()).ifPresent(i->{
-                        ((IngotBlockEntity)i).addIngot(event.getItemStack().copyWithCount(1));
-                        consumeItem(event.getItemStack(),player);
-                    });
-                    event.setUseItem(Event.Result.ALLOW);
-                    event.setCancellationResult(InteractionResult.CONSUME);
-                    event.setCanceled(true);
-                }
-            } else {
-                pos = pos.relative(event.getFace());
-                state = event.getLevel().getBlockState(pos);
-                if (state.isAir()){
-                    event.getLevel().setBlockAndUpdate(pos,INGOT_BLOCK.get().defaultBlockState());
-                    event.getLevel().getBlockEntity(pos,INGOT_BLOCK_ENTITY.get()).ifPresent(be->{
-                        ((IngotBlockEntity)be).addIngot(event.getItemStack().copyWithCount(1));
-                        ((IngotBlockEntity) be).markForSync();
-                    });
-                    event.setUseItem(Event.Result.ALLOW);
-                    event.setCancellationResult(InteractionResult.CONSUME);
-                    event.setCanceled(true);
-                }
-            }
+        ItemStack heldStack = event.getItemStack();
+
+        if (event.getHand() != InteractionHand.MAIN_HAND) {
+            return;
+        }
+
+        if (!heldStack.is(Tags.Items.INGOTS) || !player.mayBuild() || !player.isCrouching()) {
+            return;
+        }
+
+        BlockPos clickedPos = event.getHitVec().getBlockPos();
+        if (tryAddToExistingStacks(event, clickedPos, heldStack, player)) {
+            return;
+        }
+
+        BlockPos placementPos = clickedPos.relative(event.getFace());
+        if (tryPlaceNewStack(event, placementPos, heldStack, player)) {
+            return;
         }
     }
 
-    private void consumeItem(ItemStack stack,Player player){
-        if (player == null || !player.getAbilities().instabuild) {
-            stack.setCount(stack.getCount() -1 );
-            if (player != null) player.swing(InteractionHand.MAIN_HAND);
+    private boolean tryAddToExistingStacks(PlayerInteractEvent.RightClickBlock event, BlockPos startPos, ItemStack heldStack, Player player) {
+        MutableBlockPos cursor = new MutableBlockPos();
+
+        int buildLimit = event.getLevel().getMaxBuildHeight();
+        for (int currentY = startPos.getY(); currentY < buildLimit; currentY++) {
+            cursor.set(startPos.getX(), currentY, startPos.getZ());
+            BlockState state = event.getLevel().getBlockState(cursor);
+            if (!state.is(INGOT_BLOCK.get())) {
+                break;
+            }
+
+            if (state.getValue(IngotBlock.COUNT) >= 64) {
+                continue;
+            }
+
+            if (event.getLevel().getBlockEntity(cursor, INGOT_BLOCK_ENTITY.get()).map(be -> ((IngotBlockEntity) be).addIngot(heldStack)).orElse(false)) {
+                consumeItem(heldStack, player);
+                acknowledgeIngotPlacement(event, player);
+                return true;
+            }
         }
+
+        return false;
+    }
+
+    private boolean tryPlaceNewStack(PlayerInteractEvent.RightClickBlock event, BlockPos placementPos, ItemStack heldStack, Player player) {
+        if (!event.getLevel().getBlockState(placementPos).isAir()) {
+            return false;
+        }
+
+        event.getLevel().setBlockAndUpdate(placementPos, INGOT_BLOCK.get().defaultBlockState());
+        boolean added = event.getLevel().getBlockEntity(placementPos, INGOT_BLOCK_ENTITY.get())
+                .map(be -> ((IngotBlockEntity) be).addIngot(heldStack))
+                .orElse(false);
+
+        if (!added) {
+            event.getLevel().removeBlock(placementPos, false);
+            return false;
+        }
+
+        acknowledgeIngotPlacement(event, player);
+        consumeItem(heldStack, player);
+        return true;
+    }
+
+    private void acknowledgeIngotPlacement(PlayerInteractEvent.RightClickBlock event, Player player) {
+        event.setUseItem(Event.Result.ALLOW);
+        event.setCancellationResult(InteractionResult.CONSUME);
+        event.setCanceled(true);
+        if (player != null) {
+            player.swing(InteractionHand.MAIN_HAND);
+        }
+    }
+
+    private void consumeItem(ItemStack stack, Player player){
+        if (player == null || player.getAbilities().instabuild) {
+            return;
+        }
+
+        stack.shrink(1);
     }
 
     @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)

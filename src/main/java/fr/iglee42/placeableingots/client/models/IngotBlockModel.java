@@ -46,8 +46,11 @@ public class IngotBlockModel implements SimpleStaticBlockModel<IngotBlockModel> 
         TextureAtlasSprite sprite = Minecraft.getInstance().getTextureAtlas(BLOCKS_ATLAS).apply(new ResourceLocation(PlaceableIngots.MODID,"block/ingot"));
 
         for (int i = 0; i < state.getValue(IngotBlock.COUNT); i++){
+            if (i >= ibe.getIngots().size()) {
+                continue;
+            }
+
             poseStack.pushPose();
-            if (i >= ibe.getIngots().size())continue;
             ItemStack stack = ibe.getIngots().get(i);
             int color;
             if (!colorCache.containsKey(stack.getItem())){
